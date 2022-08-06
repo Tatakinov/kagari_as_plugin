@@ -1,0 +1,13 @@
+charset,UTF-8
+
+type,plugin
+name,Kagari_as_Plugin
+
+id,1e988580-14bd-11ed-aa05-0800200c9a66
+
+craftman,tatakinov
+craftmanw,タタキノフ
+
+craftmanurl,https://tatakinov.github.io/
+
+filename,kagari.dll
