@@ -2,16 +2,6 @@ local StringBuffer  = require("string_buffer")
 
 local M = {}
 
-local function hasResponse(obj)
-  if obj.Value
-    or obj.Script
-    or obj.Event
-  then
-    return true
-  end
-  return false
-end
-
 function M.tostring(obj, ...)
   local obj_type  = type(obj)
   if     obj_type == "string" then
@@ -19,10 +9,10 @@ function M.tostring(obj, ...)
   elseif obj_type == "table" then
     if #obj > 0 then
       return M.tostring(obj[math.random(#obj)], ...)
-    elseif hasResponse(obj) then
-      return obj
     elseif obj.__tostring then
       return tostring(obj)
+    else
+      return obj
     end
   elseif obj_type == "function" then
     return M.tostring({obj(...)}, ...) -- 関数が複数の値を返してくる場合に対応

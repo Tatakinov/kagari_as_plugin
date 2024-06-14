@@ -1,4 +1,5 @@
 local Class         = require("class")
+local Config        = require("plugin.config")
 local Trie          = require("trie")
 local Misc          = require("plugin.misc")
 local Module        = require("ukagaka_module.plugin")
@@ -21,8 +22,17 @@ function M:_init()
   self._charset = "UTF-8"
   self._name    = "Kagari/Kotori"
 
+  self._trie          = Trie()
+  self._replace       = {}
+  self._replace_trie  = Trie()
+  for _, v in ipairs({"[", "]", "\\_a", "\\__q"}) do
+    self._trie:add(v)
+    self._replace_trie:add(v)
+  end
   self._saori      = SaoriCaller()
   self._reserve = {}
+
+  self._external_allow_list = {}
 
   self.var  = Variable()
   self.i18n = I18N()
@@ -41,7 +51,8 @@ function M:load(path)
 
   --トーク読み込み
   Path.dirWalk(path .. "talk", function(file_path)
-    if string.sub(file_path, 1, 1) == "_" or string.sub(file_path, -4, -1) ~= ".lua" then
+    local file_name  = Path.basename(file_path)
+    if string.sub(file_name, 1, 1) == "_" or string.sub(file_name, -4, -1) ~= ".lua" then
       return
     end
     local t, err  = (function()
@@ -69,25 +80,52 @@ function M:load(path)
       table.insert(dict_error, err)
     else
       for _, v in ipairs(t) do
-        self._data:add(v)
+        --print("talk: " .. _)
+        --print("id:   " .. tostring(v.id))
+        if v.i18n then
+          self.i18n:add(v)
+        else
+          self._data:add(v)
+          if v.anchor then
+            self._trie:add(v.id)
+          end
+        end
       end
     end
   end)
 
-  self._saori:load(path, self:talk("name"))
+  self._config  = Config.load(path)
+
+  self._saori:load(path, self:talk("name"), self._config.SAORI)
   self._saori:loadall()
 
+  for _, v in ipairs(self._config.External) do
+    self._external_allow_list[v]  = true
+  end
+
+  --置換の読み込み
+  for _, v in ipairs(self._config.Replace) do
+    local before, after = v.before, v.after
+    if before and after then
+      self._replace[before]  = after
+      self._replace_trie:add(before)
+    else
+      -- TODO error
+    end
+  end
   self:talk("OnDictionaryLoaded")
 end
 
 function M:unload()
   print("unload")
+  self.var:save()
   self._saori:unloadall()
 end
 
 function M:request(req)
-  local res = Response(204, 'No Content', Protocol.v20, {
+  local res = Response(204, 'No Content', Protocol.v30, {
     Charset = self._charset,
+    Sender  = self._name,
   })
 
   if req == nil then
@@ -97,40 +135,135 @@ function M:request(req)
   local id  = req:header("ID")
   if id == nil then
     -- TODO comment
+    -- print("nil ID: " .. tostring(id))
   else
     local value, passthrough = self:_talk(id, req:headers())
-    local event = nil
     -- X-SSTP-PassThru-*への暫定的な対応
     local tbl = {}
     if type(value) == "table" then
       tbl   = value
-      event = value.Event
       value = value.Script
     end
-    if value then
-      value = string.gsub(value, "\x0d", "")
-      value = string.gsub(value, "\x0a", "")
+    if id == "OnTranslate" then
+      value = value or req:header("Reference0")
+      -- 末尾が\\e => passthroughでない、なら自動置換を実行する
+      local passthrough = false
+      local id  = req:header("Reference2")
+      if id then
+        local talk  = self._data:get(id) or {}
+        passthrough = talk.passthrough
+      end
       -- SHIORI Resource他置換しないトークには置換や末尾\eの追加を行わない
-      if not(passthrough) then
+      if value and not(passthrough) then
+        value = self:autoReplaceVars(value)
+        value = self:autoLink(value)
+        value = self:autoReplace(value)
         --  末尾にえんいーを追加する。
         --  えんいーが既にあるかを調べるのは面倒いのでとりあえず付けておく。
         value = value .. "\\e"
       end
+    end
+    if value then
+      --value = string.gsub(value, "\x0d\x0a", "")
+      value = string.gsub(value, "\x0d", "")
+      value = string.gsub(value, "\x0a", "")
       res:code(200)
       res:message("OK")
-      tbl.Script  = value
+      tbl.Script = value
     end
-    if event then
-      res:code(200)
-      res:message("OK")
-    end
+    --[[
+    -- X-SSTP-PassThru-*への暫定的な対応
+    --]]
     for k, v in pairs(tbl) do
       res:header(k, v)
     end
   end
   res:header("Charset", self._charset)
+  res:header("Sender", self._name)
   res:request(req)
   return res
+end
+
+function M:autoLink(x, id)
+  local ret = x
+  local _invalid  = 0
+  local _inner  = {}
+  local replaced  = {}
+  if id then
+    replaced[id] = true
+  end
+  local function replace(str)
+    -- TODO
+    -- SakuraScriptで装飾されている部分はアンカーを付けないための措置だが
+    -- 極めて雑。
+    if str == "[" then
+      _invalid = _invalid + 1
+    elseif str == "]" then
+      _invalid = _invalid - 1
+    elseif str == "\\_a" or str == "\\__q" then
+      _inner[str] = not(_inner[str])
+      if _inner[str] then
+        _invalid  = _invalid  + 1
+      else
+        _invalid  = _invalid  - 1
+      end
+    else
+      if _invalid == 0 and replaced[str] ~= true then
+        replaced[str] = true
+        --  \\_a[ID]text\\_a
+        --  \\_a[OnID,r0,r1,...]text\\_a
+        --  \\_a[ID,r2,r3,...]text\\_a
+        return "\\_a[" .. str .. "]" .. str .. "\\_a"
+      end
+    end
+    return str
+  end
+  if self._trie and ret then
+    ret = self._trie:gsub(ret, replace)
+  end
+  return ret
+end
+
+function M:autoReplace(x)
+  local ret = x
+  local _invalid  = 0
+  local _inner  = {}
+  local function replace(str)
+    -- TODO
+    -- SakuraScriptで装飾されている部分はアンカーを付けないための措置だが
+    -- 極めて雑。
+    if str == "[" then
+      _invalid = _invalid + 1
+    elseif str == "]" then
+      _invalid = _invalid - 1
+    elseif str == "\\_a" or str == "\\__q" then
+      _inner[str] = not(_inner[str])
+      if _inner[str] then
+        _invalid  = _invalid  + 1
+      else
+        _invalid  = _invalid  - 1
+      end
+    else
+      if _invalid == 0 then
+        return self._replace[str]
+      end
+    end
+    return str
+  end
+  if self._replace_trie and ret then
+    ret = self._replace_trie:gsub(ret, replace)
+  end
+  return ret
+end
+
+function M:autoReplaceVars(str)
+  local str  = str:gsub("(\\?)%${([^}]+)}", function(escape, s)
+    if escape == "\\" then
+      return string.format("${%s}", s)
+    end
+    return tostring(self.var(s))
+  end)
+  return str
 end
 
 function M:_talk(id, ...)
@@ -145,8 +278,8 @@ function M:_talk(id, ...)
     tbl = Misc.toArray(Misc.toArgs(...))
   end
   local language  = self.var("_Language") or ""
-  --print("shiori:talk:     " .. tostring(id))
-  --print("shiori:talk.tbl: " .. type(tbl))
+  --print("plugin:talk:     " .. tostring(id))
+  --print("plugin:talk.tbl: " .. type(tbl))
   local talk = self._chain[id]
   if talk == nil or coroutine.status(talk.content) == "dead" then
     talk  = self._data:get(id) or {}
@@ -177,7 +310,7 @@ function M:_talk(id, ...)
       str:append([[\_?]]):append(s):append([[\_?\n]])
     end
     str:append([[\_q]])
-    str.Script  = str:tostring()
+    str.Script = str:tostring()
     str.ErrorLevel  = "warning"
     str.ErrorDescription  = string.gsub(err, "\n", " | ")
     return str, true
@@ -187,6 +320,61 @@ end
 
 function M:talk(...)
   return (self:_talk(...))
+end
+
+function M:talkRandom()
+  local reserve_id  = nil
+  if #self._reserve > 0 and self._reserve[1].count == 1 then
+    reserve_id  = self._reserve[1].id
+    table.remove(self._reserve, 1)
+  end
+  for _, v in ipairs(self._reserve) do
+    v.count = v.count - 1
+  end
+  if reserve_id then
+    self.prev_talk  = self:talk(reserve_id)
+  else
+    self.prev_talk  = self:talk()
+  end
+  return self.prev_talk
+end
+
+function M:talkPrevious()
+  return self.prev_talk
+end
+
+function M:reserveTalk(id, count)
+  count = count or 1
+  local duplicated  = false
+  if #self._reserve == 0 then
+    table.insert(self._reserve, {id = id, count = count})
+  else
+    for i = 1, #self._reserve do
+      if self._reserve[i].count >= count then
+        table.insert(self._reserve, i, {id = id, count = count})
+        duplicated  = true
+        break
+      end
+    end
+  end
+  if duplicated then
+    local min = 0
+    for i = 1, #self._reserve do
+      local p = self._reserve[i]
+      if p.count <= min then
+        p.count = min + 1
+      end
+      min = p.count
+    end
+  end
+end
+
+function M:isReservedTalk(id)
+  for _, v in ipairs(self._reserve) do
+    if v.id == id then
+      return v.count
+    end
+  end
 end
 
 function M:saori(id)
@@ -212,6 +400,27 @@ end
 
 function M:setLanguage(language)
   self.i18n:set(language)
+end
+
+local b1  = string.char(0x01)
+local b2  = string.char(0x02)
+function M:createURLList(tbl)
+  local list  = {}
+  for _, v in ipairs(tbl) do
+    if type(v) ~= "table" or #v == 0 then
+      break
+    end
+    v[1]  = v[1] or ""
+    v[2]  = v[2] or ""
+    v[3]  = v[3] or ""
+    v[4]  = v[4] or ""
+    table.insert(list, table.concat(v, b1))
+  end
+  local str = table.concat(list, b2)
+  if str and #str > 0 then
+    return str
+  end
+  return nil
 end
 
 return M

@@ -32,24 +32,7 @@ end
 
 function M.request(str)
   local req = Request.parse(str)
-  --local s, res  = pcall(plugin.request, plugin, req)
   local res = plugin:request(req)
-  --[[
-  if not(s) then
-    local err = res
-    local res = Response(204, "No Content", Protocol.v30, {
-      Charset = plugin.charset,
-      Sender  = plugin.name,
-    })
-    if err then
-      -- TODO SHIORI/2.x
-      res:code(200)
-      res:message("OK")
-      res:header("Value", string.gsub(err, "\\", "\\\\") .. "\\e")
-    end
-    return res:tostring()
-  end
-  --]]
   return res:tostring()
 end
 
