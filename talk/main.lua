@@ -29,7 +29,9 @@ return {
     id  = "version",
     passthrough = true,
     content = function(plugin, ref)
-      return nil
+      return {
+        Value = "1.0.0"
+      }
     end,
   },
   {

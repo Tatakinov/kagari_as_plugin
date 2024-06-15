@@ -167,9 +167,12 @@ function M:request(req)
       --value = string.gsub(value, "\x0d\x0a", "")
       value = string.gsub(value, "\x0d", "")
       value = string.gsub(value, "\x0a", "")
+      tbl.Script = value
       res:code(200)
       res:message("OK")
-      tbl.Script = value
+    elseif id == "version" and tbl.Value ~= nil then
+      res:code(200)
+      res:message("OK")
     end
     --[[
     -- X-SSTP-PassThru-*への暫定的な対応
