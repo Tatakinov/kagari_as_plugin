@@ -174,6 +174,9 @@ function M:request(req)
     elseif id == "version" and tbl.Value ~= nil then
       res:code(200)
       res:message("OK")
+    elseif tbl.Event ~= nil then
+      res:code(200)
+      res:message("OK")
     end
     --[[
     -- X-SSTP-PassThru-*への暫定的な対応
