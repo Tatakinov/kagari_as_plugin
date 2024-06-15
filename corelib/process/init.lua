@@ -15,6 +15,7 @@ function M:_init(conf)
   self:_init_spawn()
   self.command  = conf.command
   self.chdir    = conf.chdir
+  self.hide     = conf.hide
   self.NL       = conf.NL or NL
   assert(self.command)
 end
@@ -58,6 +59,7 @@ function M:spawn(...)
   table.insert(args, 1, self.command)
   args.stdin  = pipe_r
   args.stdout = pipe_w
+  args.hide   = self.hide
   self.process = LC.spawn(args)
   if self.chdir then
     LC.chdir(current_dir)
