@@ -113,11 +113,12 @@ function M:load(path)
       -- TODO error
     end
   end
-  self:talk("OnDictionaryLoaded")
+  self:talk("OnLoad")
 end
 
 function M:unload()
   print("unload")
+  self:talk("OnUnload")
   self.var:save()
   self._saori:unloadall()
 end
