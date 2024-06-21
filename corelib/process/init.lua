@@ -1,6 +1,7 @@
 local Class   = require("class")
 local FH      = require("fh")
 local LC      = require("luachild")
+local Path    = require("path")
 
 local M = Class()
 M.__index = M
@@ -40,20 +41,7 @@ function M:spawn(...)
   local current_dir = LC.currentdir()
   --  TODO relative path
   if self.chdir then
-    if string.find(self.command, ":") or string.sub(self.command, 1, 1) == "/" then
-      local dir_sep = string.sub(package.config, 1, 1)
-      local dir_sep_fallback = "/"
-      local reverse = string.reverse(self.command)
-      local pos     = string.find(reverse, dir_sep)
-      if pos == nil then
-        pos     = string.find(reverse, dir_sep_fallback)
-      end
-      if pos then
-        local dirname = string.sub(self.command, 1, -pos)
-        --print("dirname: " .. dirname)
-        LC.chdir(dirname)
-      end
-    end
+    LC.chdir(Path.dirname(self.command))
   end
   local args  = {...}
   table.insert(args, 1, self.command)
